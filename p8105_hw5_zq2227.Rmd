@@ -1,0 +1,229 @@
+---
+title: "p8105_hw5_zq2227"
+output: github_document
+author: "Zixuan Qiu"
+date: "2023-11-12"
+---
+```{r message=FALSE}
+library(tidyverse)
+library(broom)
+library(rvest)
+set.seed(1)
+```
+
+# Problem 1
+**Describe the raw data:** This data set collect the more than 52,000 criminal homicides in 50 largest American cities over the past decade. The data include the 13 variables that include the information of victim,location of the killing, report time and  whether an arrest. The location of the case were recorded as the latitude and longitude.The New York City only have two years data compare to other city's data ending in 2017. 
+```{r message=FALSE}
+homicides= read_csv("./data/homicide-data.csv")
+```
+```{r}
+homicides=homicides|>
+  mutate(city_state =paste(city, state, sep = ", "))
+```
+
+
+```{r}
+totalnumber=homicides|>
+  group_by(city_state)|>
+  summarise(
+    nobs=n(),
+    unsolved= sum(disposition == "Closed without arrest" | disposition == "Open/No arrest") )|>
+  arrange(desc(nobs))
+
+totalnumber
+```
+
+### Baltimore 
+```{r}
+baltimore = homicides|>
+  filter(city_state == "Baltimore, MD")
+```
+
+```{r}
+totalcases = nrow(baltimore)
+totalcases
+
+unsolvedcases= sum(pull(baltimore,disposition) == "Closed without arrest" | pull(baltimore,disposition)== "Open/No arrest")
+unsolvedcases
+```
+
+```{r}
+proptest = prop.test(unsolvedcases, totalcases)
+tidyresult = broom::tidy(proptest)
+
+propestimated = pull(tidyresult,estimate)
+propci=c(pull(tidyresult,conf.low),pull(tidyresult,conf.high))
+```
+```{r}
+propestimated
+propci
+```
+
+### Iteration
+```{r}
+cityproptest= totalnumber|>
+  mutate(
+    propresult=map2(unsolved,nobs,~prop.test(.x, .y)),
+    tidypropresult=map(propresult,broom::tidy)
+  )|>
+  unnest(tidypropresult)|>
+  select(city_state,estimate,conf.low,conf.high)|>
+  arrange(desc(estimate))
+```
+```{r}
+cityproptest 
+```
+
+### Plot 1
+```{r}
+citypropplot=cityproptest|>
+  ggplot(aes(x = reorder(city_state, estimate),y=estimate))+geom_errorbar(aes(ymin = conf.low, ymax = conf.high), width = 0.2)+
+  geom_point()+
+  coord_flip()+
+  labs(title = "Unsolved Homicides % in 50 Cities",
+  x = "City", y = "Unsolved Homicides %") 
+
+citypropplot
+```
+
+# Problem 2
+```{r}
+filename=list.files(path = "./data/hw5data")
+```
+```{r}
+readfunction= function(x){
+  fileread= read.csv(paste0("./data/hw5data/",x))
+  fileread
+}
+
+filedata= map(filename,readfunction)  |>
+ bind_rows()|>
+  mutate(id=str_extract(filename, "con_\\d+|exp_\\d+"), 
+         arm = ifelse(str_detect(filename, "con"), "control", "experimental")
+          )|>
+  relocate(arm,id)
+
+rctresult=knitr::kable(filedata,digits = 1)
+rctresult
+
+```
+### Plot 2
+```{r}
+rctplot=filedata |>
+  pivot_longer(week_1:week_8,
+               names_to = "week",
+               values_to = "result")|>
+  ggplot(aes(x=week,y=result,group=id,color=arm))+
+  geom_line()+
+  theme_minimal()+
+  labs(title = "observations over time",
+       x = "week",
+       y = "value")
+
+
+rctplot    
+```
+**comment:** Based on the plot of the data. i would say that there are significant difference between the control and experiment group after the 8 week observation.That means the intervention might be considered effective. The experiment  group has a higher observed value compared to the control group over time.The experiment  group's  values are more spread out than the control group's, indicate a wider range of outcomes.
+
+# Problem 3
+```{r}
+n = 30
+sigma = 5
+n_datasets = 5000
+alpha = 0.05
+```
+
+
+```{r}
+sim_t_test = function(n, mu=0, sigma=5) {
+  sim_data = rnorm(n, mean=mu, sd = sigma)
+  ttest = t.test(sim_data, mu = 0,alternative = 'two.sided',conf.level = 0.975)
+  tidy_result = broom::tidy(ttest)
+  return(tidy_result[c("estimate", "p.value")])
+}
+
+
+
+output = vector("list", 5000)
+
+for (i in 1:5000) {
+  output[[i]] = sim_t_test(30,mu=0)
+}
+
+sim_results0 = bind_rows(output)
+
+sim_results0
+```
+
+
+### repeat for μ={1,2,3,4,5,6}
+$H_0:\mu =0, \alpha=0.05$ 
+```{r}
+mus = c(1, 2, 3, 4, 5, 6)
+all_results = list()
+
+for (mu_value in mus) {
+  output = vector("list", 5000)
+  for (i in 1:5000) {
+    output[[i]] = sim_t_test(n, mu=mu_value, sigma)
+  }
+  sim_results = bind_rows(output)|>
+  mutate(mu = mu_value)
+  all_results[[as.character(mu_value)]] = sim_results
+}
+```
+
+```{r}
+final_results = bind_rows(all_results)|>
+  relocate(mu,estimate)|>
+  mutate(mu=as.factor(mu))
+
+final_results
+```
+### Plot 3a
+```{r}
+powertest=final_results|>
+  group_by(mu)|>
+  summarise(power=mean(p.value< 0.05))#if p < 0.05,reject the null hypothesis u=0
+
+powerplot=powertest|>
+  ggplot(aes(x=mu,y = power))+
+  geom_point()+
+  geom_text(aes(label = round(power, 2)), nudge_y = 0.02 )+
+  theme_minimal()+
+  labs(title = "Power vs True μ",
+       x = "true value of μ",
+       y = "Test Power")
+
+powerplot
+```
+**Interpretation:** According to the plot, we could conclude  that the power of test exponential increase with the  true μ value increase. When μ=1, the power of test in small,the probability of reject the null hypothesis(u=0) is low. When the  μ increase to 3 or higher the power of test sharp rise to close to 1. It mean that the probability of reject the null hypothesis is close to 1. There is a positive relationship between effect size and power of test. The larger the effect size, the greater the power test. Since the larger effects are easier to detect by statistical tests, especially if the sample size is fixed.
+
+### Plot 3b
+```{r}
+estimate_avg = final_results |>
+  group_by(mu)|>
+  summarise(average_estimate = mean(estimate))
+
+
+reject_avg = final_results |>
+  filter(p.value < alpha)|>
+  group_by(mu) |>
+  summarise(avg_reject_estimate=mean(estimate))
+
+combined_avg = left_join(estimate_avg, reject_avg, by = "mu")
+```
+
+```{r}
+avgplot=combined_avg|>
+  ggplot()+
+  geom_point(aes(x = mu, y = average_estimate ,color = "average_estimate"),size=3,alpha=0.5)+
+  geom_point(aes(x = mu, y = avg_reject_estimate,color = "avg_reject_estimate"),size=3,alpha=0.5)+
+  scale_color_manual(values = c("average_estimate" = "blue", "avg_reject_estimate" = "red"))+
+  labs(x = "True value of μ", y = "Average estimate of μ oraverage estimate rekected μ", title = "Estimates vs True value of μ")
+avgplot
+```
+
+**Is the sample average of μ^ across tests for which the null is rejected approximately equal to the true value of μ?**
+
+The sample average of μ^across tests for which the null is rejected approximately equal to the true values of μ when μ value is large. when the μ value equal to 1 and 2, there are difference between the avg_reject_estimate and true μ value. The average estimate of μ^ always close to the true μ value. When the effect size is small(mu=1 or 2),the power of test id low, the type 2 error will increase, means that the false negative or the probability of  fail to  rejects a null hypothesis that is actually false in the population will increase.  That  creat the difference between the avg_reject_estimate and true μ value. When the effect size is close to the value of the null hypothesis, the test may not have enough power to correctly identify the effect.
